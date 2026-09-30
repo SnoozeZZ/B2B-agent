@@ -1,0 +1,135 @@
+services:
+  api:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      BUILD_DATABASE_URL_FROM_MYSQL: "${BUILD_DATABASE_URL_FROM_MYSQL:-true}"
+      RUN_MIGRATIONS: "true"
+      AUTO_CREATE_SCHEMA: "false"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ENQUEUE_DISTRIBUTIONS: "true"
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      BUILD_DATABASE_URL_FROM_MYSQL: "${BUILD_DATABASE_URL_FROM_MYSQL:-true}"
+      RUN_MIGRATIONS: "false"
+      AUTO_CREATE_SCHEMA: "false"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LD_LIBRARY_PATH: /opt/wecom-finance-sdk
+      UPLOAD_DIR: /app/uploads
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=2
+    volumes:
+      - uploads:/app/uploads
+      - ${WECOM_ARCHIVE_SDK_HOST_DIR:-./backend/vendor/wecom-finance-sdk}:/opt/wecom-finance-sdk:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      BUILD_DATABASE_URL_FROM_MYSQL: "${BUILD_DATABASE_URL_FROM_MYSQL:-true}"
+      RUN_MIGRATIONS: "false"
+      AUTO_CREATE_SCHEMA: "false"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      UPLOAD_DIR: /app/uploads
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app
+      - beat
+      - --loglevel=INFO
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  wecom-aibot-listener:
+    profiles: ["wecom-aibot"]
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      BUILD_DATABASE_URL_FROM_MYSQL: "${BUILD_DATABASE_URL_FROM_MYSQL:-true}"
+      RUN_MIGRATIONS: "false"
+      AUTO_CREATE_SCHEMA: "false"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command:
+      - python
+      - -m
+      - app.wecom_aibot_listener
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  uploads:
+  redis-data:

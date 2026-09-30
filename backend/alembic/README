@@ -1,0 +1,7 @@
+Database migrations for the B2B distribution application.
+
+Run from the backend directory:
+
+    alembic upgrade head
+
+The database URL is loaded from the same DATABASE_URL setting as the API.
